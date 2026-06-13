@@ -43,49 +43,4 @@ jobs:
             build/Release/**
             **/Release/*.exe
             **/Release/*.dll
-          if-no-files-found: error# .github/workflows/build-presentmon-console.yml
-name: Build PresentMon Console
-
-on:
-  workflow_dispatch:
-  push:
-    branches: [ main ]
-
-permissions:
-  contents: read
-
-jobs:
-  build:
-    runs-on: windows-2022
-
-    steps:
-      - name: Checkout fork
-        uses: actions/checkout@v5
-
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v3
-
-      - name: Build PresentMon console app
-        shell: pwsh
-        run: |
-          msbuild PresentMon\ConsoleApplication.sln `
-            /m `
-            /p:Platform=x64 `
-            /p:Configuration=Release
-
-      - name: List build outputs
-        shell: pwsh
-        run: |
-          Get-ChildItem -Recurse -Include *.exe,*.dll |
-            Where-Object { $_.FullName -match 'Release' } |
-            Select-Object FullName, Length
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: PresentMon-console-main-x64
-          path: |
-            build/Release/**
-            **/Release/*.exe
-            **/Release/*.dll
           if-no-files-found: error
