@@ -1,4 +1,3 @@
-# .github/workflows/build-presentmon-console.yml
 name: Build PresentMon Console
 
 on:
@@ -19,6 +18,16 @@ jobs:
 
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v3
+        with:
+          msbuild-architecture: x64
+
+      - name: Setup vcpkg dependencies
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git build\vcpkg
+          .\build\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+          .\build\vcpkg\vcpkg.exe integrate install
+          .\build\vcpkg\vcpkg.exe install --triplet x64-windows-static
 
       - name: Build PresentMon console app
         shell: pwsh
@@ -40,6 +49,7 @@ jobs:
         with:
           name: PresentMon-console-main-x64
           path: |
+            build/Release/PresentMon-dev-x64.exe
             build/Release/**
             **/Release/*.exe
             **/Release/*.dll
