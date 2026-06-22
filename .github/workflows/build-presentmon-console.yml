@@ -50,26 +50,44 @@ jobs:
       - name: Create Release signing certificate
         shell: pwsh
         run: |
-          $store = "Cert:\CurrentUser\PrivateCertStore"
-          if (-not (Test-Path $store)) {
-            New-Item -Path $store | Out-Null
-          }
-
           $cert = New-SelfSignedCertificate `
             -Type CodeSigningCert `
             -Subject "CN=Test Certificate - For Internal Use Only" `
             -FriendlyName "PresentMon CI test certificate" `
-            -CertStoreLocation $store `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
             -HashAlgorithm SHA256 `
             -KeyAlgorithm RSA `
             -KeyLength 2048 `
             -KeyExportPolicy Exportable
 
-          $certificateFile = Join-Path $env:RUNNER_TEMP "presentmon-testcert.cer"
-          Export-Certificate -Cert $cert -FilePath $certificateFile | Out-Null
-          Import-Certificate `
-            -FilePath $certificateFile `
-            -CertStoreLocation "Cert:\CurrentUser\Root" | Out-Null
+          $storeLocation = [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser
+          $openFlags = [System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite
+
+          # X509Store can create a custom store; the PowerShell certificate
+          # provider cannot create custom stores under CurrentUser.
+          $privateStore = [System.Security.Cryptography.X509Certificates.X509Store]::new(
+            "PrivateCertStore",
+            $storeLocation
+          )
+          try {
+            $privateStore.Open($openFlags)
+            $privateStore.Add($cert)
+          }
+          finally {
+            $privateStore.Close()
+          }
+
+          $rootStore = [System.Security.Cryptography.X509Certificates.X509Store]::new(
+            "Root",
+            $storeLocation
+          )
+          try {
+            $rootStore.Open($openFlags)
+            $rootStore.Add($cert)
+          }
+          finally {
+            $rootStore.Close()
+          }
 
       - name: Build full PresentMon app and installer
         shell: pwsh
