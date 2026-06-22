@@ -1,9 +1,9 @@
-name: Build PresentMon Console
+name: Build PresentMon
 
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [main]
 
 permissions:
   contents: read
@@ -11,10 +11,18 @@ permissions:
 jobs:
   build:
     runs-on: windows-2022
+    timeout-minutes: 120
 
     steps:
       - name: Checkout fork
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: IntelPresentMon/AppCef/ipm-ui-vue/package-lock.json
 
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v3
@@ -24,33 +32,78 @@ jobs:
       - name: Setup vcpkg dependencies
         shell: pwsh
         run: |
-          git clone https://github.com/microsoft/vcpkg.git build\vcpkg
-          .\build\vcpkg\bootstrap-vcpkg.bat -disableMetrics
-          .\build\vcpkg\vcpkg.exe integrate install
-          .\build\vcpkg\vcpkg.exe install --triplet x64-windows-static
+          $vcpkg = Join-Path $env:VCPKG_INSTALLATION_ROOT "vcpkg.exe"
+          if (-not (Test-Path $vcpkg)) {
+            throw "vcpkg was not found at $vcpkg"
+          }
 
-      - name: Build PresentMon console app
+          & $vcpkg integrate install
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          & $vcpkg install --triplet x64-windows-static --clean-after-build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Bootstrap PresentMon sources
+        shell: pwsh
+        run: .\bootstrap.ps1
+
+      - name: Create Release signing certificate
         shell: pwsh
         run: |
-          msbuild PresentMon\ConsoleApplication.sln `
+          $store = "Cert:\CurrentUser\PrivateCertStore"
+          if (-not (Test-Path $store)) {
+            New-Item -Path $store | Out-Null
+          }
+
+          $cert = New-SelfSignedCertificate `
+            -Type CodeSigningCert `
+            -Subject "CN=Test Certificate - For Internal Use Only" `
+            -FriendlyName "PresentMon CI test certificate" `
+            -CertStoreLocation $store `
+            -HashAlgorithm SHA256 `
+            -KeyAlgorithm RSA `
+            -KeyLength 2048 `
+            -KeyExportPolicy Exportable
+
+          $certificateFile = Join-Path $env:RUNNER_TEMP "presentmon-testcert.cer"
+          Export-Certificate -Cert $cert -FilePath $certificateFile | Out-Null
+          Import-Certificate `
+            -FilePath $certificateFile `
+            -CertStoreLocation "Cert:\CurrentUser\Root" | Out-Null
+
+      - name: Build full PresentMon app and installer
+        shell: pwsh
+        run: |
+          msbuild PresentMon.sln `
             /m `
             /p:Platform=x64 `
             /p:Configuration=Release
 
-      - name: List build outputs
+      - name: Verify full build outputs
         shell: pwsh
         run: |
-          Get-ChildItem -Recurse -Include *.exe,*.dll |
-            Where-Object { $_.FullName -match 'Release' } |
+          $requiredOutputs = @(
+            "build\Release\PresentMon.exe",
+            "build\Release\PresentMonUI.exe",
+            "build\Release\PresentMonService.exe",
+            "build\Release\PresentMonAPI2.dll",
+            "build\Release\PresentMon-dev-x64.exe",
+            "build\Release\en-us\PresentMon.msi"
+          )
+
+          $missingOutputs = $requiredOutputs | Where-Object { -not (Test-Path $_) }
+          if ($missingOutputs) {
+            throw "Full build is missing required outputs: $($missingOutputs -join ', ')"
+          }
+
+          Get-ChildItem build\Release -Recurse -File |
+            Sort-Object FullName |
             Select-Object FullName, Length
 
-      - name: Upload build artifact
+      - name: Upload full PresentMon artifact
         uses: actions/upload-artifact@v6
         with:
-          name: PresentMon-console-main-x64
-          path: |
-            build/Release/PresentMon-dev-x64.exe
-            build/Release/**
-            **/Release/*.exe
-            **/Release/*.dll
+          name: PresentMon-full-main-x64
+          path: build/Release/**
           if-no-files-found: error
+          compression-level: 0
